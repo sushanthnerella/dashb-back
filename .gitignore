@@ -15,9 +15,13 @@ __pycache__/
 # Large ML models
 backend/models/
 models/
-.bin
-.safetensors
-.pt
-.ckpt
+*.bin
+*.safetensors
+*.pt
+*.ckpt
+
+# Large data files
+data/ophthalmology_reference.pdf
+*.pdf
 
 
