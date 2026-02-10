@@ -1,0 +1,31 @@
+# Backend Dependencies for Hospital EMR Dashboard
+# Python 3.8+
+# Updated: 2026-01-16 with actual installed versions
+
+# Web Framework & Server
+fastapi==0.118.3
+uvicorn==0.37.0
+pydantic==2.11.4
+pydantic-core==2.33.2
+
+# Database
+pymongo==4.15.3
+certifi==2025.4.26
+
+# Authentication & Security
+passlib==1.7.4
+bcrypt==3.2.0
+
+# HTTP & External APIs
+requests==2.32.3
+
+# Environment Configuration
+python-dotenv==1.0.0
+
+# Utilities
+python-multipart==0.0.20
+
+# Agent 2: Book-based medical knowledge retrieval (RAG)
+chromadb
+sentence-transformers
+pypdf
