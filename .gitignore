@@ -12,4 +12,12 @@ __pycache__/
 
 # OS
 .DS_Store
+# Large ML models
+backend/models/
+models/
+.bin
+.safetensors
+.pt
+.ckpt
+
 
