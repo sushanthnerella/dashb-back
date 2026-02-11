@@ -20,9 +20,10 @@ models/
 *.pt
 *.ckpt
 
-# Large data files
-# Keep data/ folder tracked
-!data/
-!data/**
+# Large data files - keep folder but ignore large files
+data/*.pdf
+data/*.bin
+data/*.csv
+!data/.gitkeep
 
 
