@@ -60,6 +60,118 @@ _STOPWORDS = {
     "its",
     "into",
     "about",
+    "can",
+    "how",
+    "what",
+    "why",
+    "when",
+    "where",
+    "which",
+    "who",
+    "does",
+    "did",
+    "done",
+    "should",
+    "would",
+    "could",
+    "using",
+    "use",
+}
+
+_INTENT_PATTERNS = {
+    "definition": [
+        "what is",
+        "what are",
+        "define",
+        "definition",
+        "meaning",
+        "refers to",
+    ],
+    "procedure": [
+        "how to",
+        "steps",
+        "procedure",
+        "method",
+        "workflow",
+        "implement",
+        "perform",
+    ],
+    "compare": [
+        "compare",
+        "difference",
+        "versus",
+        "vs",
+        "contrast",
+    ],
+    "formula": [
+        "formula",
+        "equation",
+        "calculate",
+        "compute",
+        "derive",
+    ],
+    "troubleshooting": [
+        "error",
+        "issue",
+        "problem",
+        "fails",
+        "failure",
+        "not working",
+        "fix",
+        "troubleshoot",
+    ],
+}
+
+_PREDICATE_TERMS = {
+    "define",
+    "explain",
+    "compare",
+    "calculate",
+    "compute",
+    "derive",
+    "apply",
+    "diagnose",
+    "treat",
+    "manage",
+    "implement",
+    "perform",
+    "prevent",
+    "classify",
+    "identify",
+    "interpret",
+    "evaluate",
+}
+
+_TERM_EXPANSIONS = {
+    "definition": ["meaning", "description", "concept"],
+    "procedure": ["steps", "workflow", "protocol"],
+    "compare": ["difference", "contrast", "distinguish"],
+    "formula": ["equation", "calculation", "expression"],
+    "troubleshooting": ["error", "root cause", "resolution"],
+    "diagnosis": ["assessment", "finding", "clinical impression"],
+    "treatment": ["therapy", "management", "intervention"],
+    "symptom": ["sign", "presentation", "manifestation"],
+    "glaucoma": ["optic neuropathy", "visual field loss", "ocular hypertension"],
+    "iop": ["intraocular pressure", "eye pressure", "tonometry"],
+    "retina": ["retinal tissue", "fundus", "posterior segment"],
+}
+
+_INTENT_DEFAULT_COMPONENTS = {
+    "definition": ["definition", "key characteristics", "conditions", "exceptions"],
+    "procedure": ["goal", "steps", "conditions", "exceptions"],
+    "explain": ["definition", "mechanism", "conditions", "exceptions"],
+    "compare": ["comparison criteria", "similarities", "differences", "when to use each"],
+    "formula": ["formula", "variable definitions", "application conditions", "worked example"],
+    "troubleshooting": ["symptom", "root cause", "diagnostic steps", "fixes"],
+}
+
+_INTENT_STRUCTURE_PREFS = {
+    "definition": ["definition section", "summary section", "key terms"],
+    "procedure": ["procedural steps", "summary section", "key terms"],
+    "explain": ["summary section", "definition section", "key terms"],
+    "compare": ["summary section", "key terms", "definition section"],
+    "formula": ["definition section", "key terms", "procedural steps"],
+    "troubleshooting": ["procedural steps", "summary section", "key terms"],
 }
 
 
@@ -109,6 +221,141 @@ def _extract_query_points(query: str, max_points: int) -> list[str]:
         if len(points) >= max_points:
             break
     return points
+
+
+def _classify_intent(query: str) -> str:
+    query_lower = (query or "").lower()
+    scores = {intent: 0 for intent in _INTENT_PATTERNS}
+    for intent, patterns in _INTENT_PATTERNS.items():
+        for pattern in patterns:
+            if pattern in query_lower:
+                scores[intent] += 2
+
+    if query_lower.startswith("how"):
+        scores["procedure"] += 1
+    elif query_lower.startswith("what"):
+        scores["definition"] += 1
+    elif query_lower.startswith("why"):
+        scores["troubleshooting"] += 1
+
+    best_intent = max(scores, key=scores.get)
+    if scores[best_intent] == 0:
+        return "explain"
+    return best_intent
+
+
+def _extract_entities_and_predicates(query: str) -> tuple[list[str], list[str]]:
+    ordered_tokens = re.split(r"\W+", (query or "").lower())
+    entities = []
+    predicates = []
+    seen_entities = set()
+    seen_predicates = set()
+
+    for token in ordered_tokens:
+        if not token or len(token) < 3:
+            continue
+        if token in _PREDICATE_TERMS:
+            if token not in seen_predicates:
+                predicates.append(token)
+                seen_predicates.add(token)
+            continue
+        if token in _STOPWORDS:
+            continue
+        if token not in seen_entities:
+            entities.append(token)
+            seen_entities.add(token)
+
+    return entities[:6], predicates[:5]
+
+
+def _expand_keywords(intent: str, entities: list[str], predicates: list[str], domain: str) -> list[str]:
+    expanded = []
+    seen = set()
+
+    def add_term(term: str) -> None:
+        if term and term not in seen:
+            expanded.append(term)
+            seen.add(term)
+
+    add_term(intent)
+    for term in entities + predicates:
+        add_term(term)
+        for synonym in _TERM_EXPANSIONS.get(term, []):
+            add_term(synonym)
+
+    for synonym in _TERM_EXPANSIONS.get(intent, []):
+        add_term(synonym)
+
+    domain_lower = (domain or "").lower()
+    if "ophthalm" in domain_lower or "eye" in domain_lower:
+        for extra in ["ocular", "visual acuity", "optic nerve", "clinical guideline"]:
+            add_term(extra)
+
+    return expanded[:15]
+
+
+def _build_subqueries(
+    intent: str,
+    original_query: str,
+    entities: list[str],
+    predicates: list[str],
+    keyword_expansion: list[str],
+) -> dict:
+    entity_phrase = " ".join(entities[:4]).strip()
+    predicate_phrase = " ".join(predicates[:2]).strip()
+    expansion_phrase = " ".join(keyword_expansion[:5]).strip()
+
+    if intent == "definition":
+        direct = f"{original_query} precise definition key terms"
+        support = f"{entity_phrase} characteristics diagnostic criteria context"
+        disambig = f"{entity_phrase} synonyms alternate terminology {expansion_phrase}".strip()
+    elif intent == "procedure":
+        direct = f"{original_query} step by step procedure"
+        support = f"{entity_phrase} prerequisites sequence constraints safety considerations"
+        disambig = f"{entity_phrase} workflow protocol method {expansion_phrase}".strip()
+    elif intent == "compare":
+        direct = f"{original_query} differences similarities comparison table"
+        support = f"{entity_phrase} criteria indications limitations"
+        disambig = f"{entity_phrase} versus contrast distinguish {expansion_phrase}".strip()
+    elif intent == "formula":
+        direct = f"{original_query} formula equation variable definitions"
+        support = f"{entity_phrase} derivation assumptions units examples"
+        disambig = f"{entity_phrase} compute calculate derive {expansion_phrase}".strip()
+    elif intent == "troubleshooting":
+        direct = f"{original_query} root cause diagnosis fix"
+        support = f"{entity_phrase} failure conditions warning signs corrective actions"
+        disambig = f"{entity_phrase} common errors mitigation {expansion_phrase}".strip()
+    else:
+        direct = f"{original_query} explanation mechanism key concepts"
+        support = f"{entity_phrase} causes effects conditions exceptions"
+        disambig = f"{entity_phrase} related terms {predicate_phrase} {expansion_phrase}".strip()
+
+    return {
+        "direct_answer_query": " ".join(direct.split()),
+        "support_query": " ".join(support.split()),
+        "disambiguation_query": " ".join(disambig.split()),
+    }
+
+
+def optimize_semantic_search_query(user_query: str, domain: str = "") -> dict:
+    """Create optimized semantic sub-queries for high-precision retrieval."""
+    query = (user_query or "").strip()
+    intent = _classify_intent(query)
+    entities, predicates = _extract_entities_and_predicates(query)
+    keyword_expansion = _expand_keywords(intent, entities, predicates, domain)
+    subqueries = _build_subqueries(intent, query, entities, predicates, keyword_expansion)
+
+    return {
+        "intent_classification": intent,
+        "core_entities": entities,
+        "core_predicates": predicates,
+        "semantic_subqueries": subqueries,
+        "keyword_expansion": keyword_expansion,
+        "structure_preferences": _INTENT_STRUCTURE_PREFS.get(intent, _INTENT_STRUCTURE_PREFS["explain"]),
+        "expected_answer_components": _INTENT_DEFAULT_COMPONENTS.get(
+            intent, _INTENT_DEFAULT_COMPONENTS["explain"]
+        ),
+    }
 
 
 def _get_embedder() -> SentenceTransformer:
