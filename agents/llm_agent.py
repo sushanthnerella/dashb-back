@@ -6,7 +6,10 @@ from pathlib import Path
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
-MODEL_PATH = str(Path(__file__).resolve().parents[1] / "models" / "deepseek-1.5b")
+# Use a publicly available model
+# distilgpt2: lightweight, fast, no authentication needed
+# Alternative: "google/flan-t5-small", "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+MODEL_PATH = "distilgpt2"
 
 bnb_config = BitsAndBytesConfig(
     load_in_4bit=True,
