@@ -21,7 +21,8 @@ models/
 *.ckpt
 
 # Large data files
-data/ophthalmology_reference.pdf
-*.pdf
+# Keep data/ folder tracked
+!data/
+!data/**
 
 
