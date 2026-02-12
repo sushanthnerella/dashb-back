@@ -1,3 +1,11 @@
+import warnings
+
+warnings.filterwarnings(
+    "ignore",
+    message="`resume_download` is deprecated",
+    category=FutureWarning,
+)
+
 from agents.retrival_agent1 import get_patient_summary
 from agents.knowledge_retriever import search_knowledge
 from agents.llm_agent import run_summary_llm

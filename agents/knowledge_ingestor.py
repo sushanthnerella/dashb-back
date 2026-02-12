@@ -19,7 +19,7 @@ from sentence_transformers import SentenceTransformer
 
 
 # --- Paths / constants ---
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[1]
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 
 CHROMA_DIR = REPO_ROOT / "vector_db" / "book_chunks"

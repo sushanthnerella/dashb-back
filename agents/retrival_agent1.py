@@ -15,7 +15,20 @@ DB_NAME = os.getenv("DATABASE_NAME", "hospital-emr")
 # Short timeout so offline runs fail fast instead of hanging.
 client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=3000)
 db = client[DB_NAME]
-patients = db["patients"]
+_COLLECTION_CANDIDATES = ("patients", "paitents")
+
+
+def _resolve_patients_collection():
+    for name in _COLLECTION_CANDIDATES:
+        try:
+            if db[name].estimated_document_count() > 0:
+                return db[name]
+        except Exception:
+            continue
+    return db["patients"]
+
+
+patients = _resolve_patients_collection()
 
 
 def _coerce_object_id(value):
@@ -41,7 +54,7 @@ def extract_summary_from_visit(visit):
     # Optometry data
     opd = stages.get("opd", {}).get("data", {}).get("optometry", {})
     visit_summary["vision"] = opd.get("vision", {})
-    visit_summary["iop"] = opd.get("iop", {})
+    visit_summary["iop"] = opd.get("iop", {}) or stages.get("opd", {}).get("data", {}).get("iop", {})
     visit_summary["refraction"] = opd.get("autoRefraction", {})
 
     # Doctor data

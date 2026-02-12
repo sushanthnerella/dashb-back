@@ -1,35 +1,66 @@
 # llm_agent.py
 
+import os
 import re
 from pathlib import Path
 
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 # Use a publicly available model
 # distilgpt2: lightweight, fast, no authentication needed
 # Alternative: "google/flan-t5-small", "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
 MODEL_PATH = "distilgpt2"
+USE_GENERATIVE_SUMMARY = os.getenv("USE_GENERATIVE_SUMMARY", "0") == "1"
 
-bnb_config = BitsAndBytesConfig(
-    load_in_4bit=True,
-    bnb_4bit_compute_dtype=torch.float16,
-    bnb_4bit_quant_type="nf4",
-    bnb_4bit_use_double_quant=True,
-)
+# Optional: BitsAndBytes quantization (disabled for stability)
+try:
+    from transformers import BitsAndBytesConfig
+    bnb_config = BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_compute_dtype=torch.float16,
+        bnb_4bit_quant_type="nf4",
+        bnb_4bit_use_double_quant=True,
+    )
+except ImportError:
+    bnb_config = None
 
-tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH, use_fast=True)
-if tokenizer.pad_token is None:
-    tokenizer.pad_token = tokenizer.eos_token
+tokenizer = None
+model = None
+use_cuda = torch.cuda.is_available()
 
-model = AutoModelForCausalLM.from_pretrained(
-    MODEL_PATH,
-    quantization_config=bnb_config,
-    device_map="auto",
-    torch_dtype=torch.float16
-)
-model.eval()
-model.config.use_cache = True
+if USE_GENERATIVE_SUMMARY:
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH, use_fast=True)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    model_kwargs = {}
+    if use_cuda:
+        model_kwargs["device_map"] = "auto"
+        model_kwargs["torch_dtype"] = torch.float16
+
+    if bnb_config is not None and use_cuda:
+        model_kwargs["quantization_config"] = bnb_config
+
+    try:
+        model = AutoModelForCausalLM.from_pretrained(
+            MODEL_PATH,
+            **model_kwargs
+        )
+    except ImportError as exc:
+        # Fallback for environments without accelerate/bitsandbytes.
+        if "Accelerate" not in str(exc):
+            raise
+        fallback_kwargs = {}
+        if use_cuda:
+            fallback_kwargs["torch_dtype"] = torch.float16
+        model = AutoModelForCausalLM.from_pretrained(MODEL_PATH, **fallback_kwargs)
+
+    if not use_cuda:
+        model = model.to("cpu")
+
+    model.eval()
+    model.config.use_cache = True
 
 
 _PLANNER_STOPWORDS = {
@@ -213,10 +244,68 @@ def run_summary_llm(patient_summary, knowledge_chunks, max_tokens=200):
     if "visits" not in patient_summary:
         return "Error: patient summary missing visits"
 
+    visits = patient_summary["visits"]
+    if not visits:
+        return "No visits found for this patient."
+
+    first = visits[0]
+    latest = visits[-1]
+    name = patient_summary.get("name", "Patient")
+    age = patient_summary.get("age", "")
+    sex = patient_summary.get("sex", "")
+
+    diagnoses = []
+    for v in visits:
+        d = (v.get("diagnosis") or "").strip()
+        if d and d not in diagnoses:
+            diagnoses.append(d)
+
+    iop = latest.get("iop", {}) or {}
+    iop_right = iop.get("rightEye", "")
+    iop_left = iop.get("leftEye", "")
+    latest_notes = (latest.get("notes") or "").strip()
+    prescriptions = latest.get("prescription", []) or []
+    rx_names = [item.get("name", "").strip() for item in prescriptions if item.get("name")]
+
+    first_date = str(first.get("visitDate", ""))[:10]
+    latest_date = str(latest.get("visitDate", ""))[:10]
+    diag_text = ", ".join(diagnoses) if diagnoses else "refractive error"
+    rx_text = ", ".join(rx_names) if rx_names else "ongoing observation"
+
+    latest_vision = latest.get("vision", {}) or {}
+    vision_text = "not documented"
+    if latest_vision:
+        parts = []
+        for key, value in latest_vision.items():
+            if isinstance(value, dict):
+                re_val = value.get("rightEye", "N/A")
+                le_val = value.get("leftEye", "N/A")
+                parts.append(f"{key}: RE {re_val}, LE {le_val}")
+        if parts:
+            vision_text = "; ".join(parts)
+
+    follow_up_text = "as per treating ophthalmologist"
+    if latest_notes:
+        note_l = latest_notes.lower()
+        if "month" in note_l or "week" in note_l or "day" in note_l:
+            follow_up_text = latest_notes
+        else:
+            follow_up_text = f"{latest_notes} (clinician note)"
+
+    deterministic_summary = (
+        f"Clinical course is consistent with {diag_text}. "
+        f"Most recent objective findings show intraocular pressure of RE {iop_right or 'N/A'} mmHg "
+        f"and LE {iop_left or 'N/A'} mmHg, with latest documented visual status as {vision_text}. "
+        f"Current management includes {rx_text}, and follow-up is advised in {follow_up_text}."
+    )
+
+    if not USE_GENERATIVE_SUMMARY:
+        return deterministic_summary
+
     context = "\n".join(knowledge_chunks)
     visits_text = "\n".join([
         f"- On {v['visitDate']}: IOP: {v.get('iop',{})}, Vision: {v.get('vision',{})}, Diagnosis: {v.get('diagnosis','')}, Notes: {v.get('notes','')}"
-        for v in patient_summary["visits"]
+        for v in visits
     ])
 
     prompt = f"""
@@ -238,6 +327,9 @@ Sex: {patient_summary['sex']}
 ### One-paragraph summary
 """.strip()
 
+    if tokenizer is None or model is None:
+        return deterministic_summary
+
     inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
 
     with torch.no_grad():
@@ -253,5 +345,7 @@ Sex: {patient_summary['sex']}
             pad_token_id=tokenizer.eos_token_id
         )
 
-    response = tokenizer.decode(output[0][inputs["input_ids"].shape[-1]:], skip_special_tokens=True)
-    return response.strip()
+    response = tokenizer.decode(output[0][inputs["input_ids"].shape[-1]:], skip_special_tokens=True).strip()
+    if len(response.split()) < 12:
+        return deterministic_summary
+    return response

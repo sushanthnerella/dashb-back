@@ -12,7 +12,7 @@ import chromadb
 from sentence_transformers import SentenceTransformer
 
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[1]
 CHROMA_DIR = REPO_ROOT / "vector_db" / "book_chunks"
 REGISTRY_PATH = REPO_ROOT / "vector_db" / "books_registry.json"
 COLLECTION_PREFIX = "book__"
@@ -115,6 +115,7 @@ def _get_embedder() -> SentenceTransformer:
 def _get_client() -> chromadb.PersistentClient:
     global _client
     if _client is None:
+        CHROMA_DIR.mkdir(parents=True, exist_ok=True)
         _client = chromadb.PersistentClient(path=str(CHROMA_DIR))
     return _client
 
